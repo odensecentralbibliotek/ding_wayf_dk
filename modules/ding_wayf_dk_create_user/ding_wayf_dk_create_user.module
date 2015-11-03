@@ -65,7 +65,7 @@ function ding_wayf_dk_create_user_ctools_plugin_directory($owner, $plugin_type) 
 function ding_wayf_dk_create_user_wayf_dk_login_authenticate_result_alter($result) {
   if (isset($_SESSION['ding_wayf_dk_login_destination']) && $_SESSION['ding_wayf_dk_login_destination'] == 'wayf/create-user/form') {
     // Extract unique id form the WAYF attributes (the CPR number).
-    preg_match('/\d{10}$/', reset($result['attributes']['schacPersonalUniqueID']), $uniqueID);
+    preg_match('/(\d{10}$)/', reset($result['attributes']['schacPersonalUniqueID']), $uniqueID);
     $uniqueID = reset($uniqueID);
 
     // Check if age limit should be set.
@@ -104,7 +104,7 @@ function ding_wayf_dk_create_user_wayf_dk_login_authenticate_result_alter($resul
       // Check if limit have been reached.
       if ($from->diff($to)->y < $limit) {
         // The age limit has to kick in.
-        drupal_set_message('You are not allowed to automatically be created because of the age limit. Please go to your local library to registry.');
+        drupal_set_message(t('You are not allowed to automatically be created because of the age limit. Please go to your local library to registry.'));
 
         // Redirect to front page.
         drupal_goto('<front>');
@@ -303,6 +303,17 @@ function ding_wayf_dk_create_user_form() {
       'autocomplete' => 'off',
     ),
   );
+  
+    $form['sms'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Telefon nummer'),
+    '#description' => t('Indtast dit tlf. nr.'),
+    '#maxlength' => 10,
+    '#required' => TRUE,
+    '#attributes' => array(
+      'autocomplete' => 'off',
+    ),
+  );
 
   $form['mail'] = array(
     '#type' => 'textfield',
@@ -379,7 +390,7 @@ function ding_wayf_dk_create_user_form_sbumit($form, &$form_state) {
   // Try to create the user at the provider.
   try {
     // Create user.
-    ding_provider_invoke('user', 'create', $cpr, $values['pin'], $values['name'], $values['mail'], $values['branch']);
+    alma_client_invoke('self_register', $cpr, $values['pin'], $values['name'], $values['mail'], $values['branch'], $values['sms']);
 
     // Login the user and ensure he/her is redirect to notice page.
     $_REQUEST['destination'] = 'wayf/create-user/notice';

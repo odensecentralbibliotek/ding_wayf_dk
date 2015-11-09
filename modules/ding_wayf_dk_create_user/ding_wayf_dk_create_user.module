@@ -262,9 +262,16 @@ function ding_wayf_dk_create_user_notice() {
 /**
  * Menu callback to create the user creation form.
  */
-function ding_wayf_dk_create_user_form() {
+function ding_wayf_dk_create_user_form($form, &$form_state) {
   // Remove all message from the normal login, that have not succeed.
   drupal_get_messages(null, TRUE);
+
+  if(isset($form_state['error']) && $form_state['error']){
+    form_set_error('pin', t('Pin code minimum length is ' . ding_user_get_pincode_length()));
+  }
+  if(!isset($form_state['step'])){
+    $form_state['step'] = 1;
+  }
 
   // Check if user have been logged in.
   if (user_is_logged_in()) {
@@ -303,7 +310,7 @@ function ding_wayf_dk_create_user_form() {
       'autocomplete' => 'off',
     ),
   );
-  
+
     $form['sms'] = array(
     '#type' => 'textfield',
     '#title' => t('Telefon nummer'),
@@ -381,12 +388,20 @@ function ding_wayf_dk_create_user_wayf_dk_login_pre_logout() {
  */
 function ding_wayf_dk_create_user_form_sbumit($form, &$form_state) {
   $values = $form_state['values'];
+  $form_state['rebuild'] = TRUE;
+  if(strlen($values['pin']) < ding_user_get_pincode_length()){
+    //store error and return before the step is increased
+    $form_state['error'] = true;
+    return;
+  }
+  $form_state['step']++;
+
   $cpr = $_SESSION['ding_wayf_dk_create_user'];
 
   // Remove session variables used in redirects in the user creation process.
   unset($_SESSION['ding_wayf_dk_create_user']);
   unset($_SESSION['ding_wayf_dk_login_destination']);
-
+  
   // Try to create the user at the provider.
   try {
     // Create user.

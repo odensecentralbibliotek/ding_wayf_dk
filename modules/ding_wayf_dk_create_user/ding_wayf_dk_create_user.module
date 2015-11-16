@@ -265,7 +265,11 @@ function ding_wayf_dk_create_user_notice() {
 function ding_wayf_dk_create_user_form($form, &$form_state) {
   // Remove all message from the normal login, that have not succeed.
   drupal_get_messages(null, TRUE);
-
+  
+  if(isset($form_state['error_mail']) && $form_state['error_mail']){
+    form_set_error('mail_confirm', t('The specified e-mail addresses do not match.'));
+  }
+  
   if(isset($form_state['error']) && $form_state['error']){
     form_set_error('pin', t('Pin code minimum length is ' . ding_user_get_pincode_length()));
   }
@@ -331,6 +335,16 @@ function ding_wayf_dk_create_user_form($form, &$form_state) {
       'autocomplete' => 'off',
     ),
   );
+  
+  $form['mail_confirm'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Confirm e-mail address'),
+    '#description' => t('Provide your e-mail address in both fields.'),
+    '#required' => TRUE,
+    '#attributes' => array(
+      'autocomplete' => 'off',
+    ),
+  );
 
   // Get branch options form the active provider.
   global $user;
@@ -389,6 +403,12 @@ function ding_wayf_dk_create_user_wayf_dk_login_pre_logout() {
 function ding_wayf_dk_create_user_form_sbumit($form, &$form_state) {
   $values = $form_state['values'];
   $form_state['rebuild'] = TRUE;
+   // Display an error if the two email addresses don't match.
+  if ($values['mail'] != $values['mail_confirm']) {      
+       $form_state['error_mail'] = true;
+       return;
+  }
+  
   if(strlen($values['pin']) < ding_user_get_pincode_length()){
     //store error and return before the step is increased
     $form_state['error'] = true;

@@ -1,4 +1,5 @@
 <?php
+
 /**
  * @file
  * Handles user creation in the provider with information from WAYF login.
@@ -265,11 +266,11 @@ function ding_wayf_dk_create_user_notice() {
 function ding_wayf_dk_create_user_form($form, &$form_state) {
   // Remove all message from the normal login, that have not succeed.
   drupal_get_messages(null, TRUE);
-  
+
   if(isset($form_state['error_mail']) && $form_state['error_mail']){
     form_set_error('mail_confirm', t('The specified e-mail addresses do not match.'));
   }
-  
+
   if(isset($form_state['error']) && $form_state['error']){
     form_set_error('pin', t('Pin code minimum length is ' . ding_user_get_pincode_length()));
   }
@@ -304,17 +305,6 @@ function ding_wayf_dk_create_user_form($form, &$form_state) {
     '#required' => TRUE,
   );
 
-  $form['name'] = array(
-    '#type' => 'textfield',
-    '#title' => t('Name'),
-    '#description' => t('You full name.'),
-    '#maxlength' => 100,
-    '#required' => TRUE,
-    '#attributes' => array(
-      'autocomplete' => 'off',
-    ),
-  );
-
     $form['sms'] = array(
     '#type' => 'textfield',
     '#title' => t('Telefon nummer'),
@@ -335,7 +325,7 @@ function ding_wayf_dk_create_user_form($form, &$form_state) {
       'autocomplete' => 'off',
     ),
   );
-  
+
   $form['mail_confirm'] = array(
     '#type' => 'textfield',
     '#title' => t('Confirm e-mail address'),
@@ -404,11 +394,11 @@ function ding_wayf_dk_create_user_form_sbumit($form, &$form_state) {
   $values = $form_state['values'];
   $form_state['rebuild'] = TRUE;
    // Display an error if the two email addresses don't match.
-  if ($values['mail'] != $values['mail_confirm']) {      
+  if ($values['mail'] != $values['mail_confirm']) {
        $form_state['error_mail'] = true;
        return;
   }
-  
+
   if(strlen($values['pin']) < ding_user_get_pincode_length()){
     //store error and return before the step is increased
     $form_state['error'] = true;
@@ -418,26 +408,156 @@ function ding_wayf_dk_create_user_form_sbumit($form, &$form_state) {
 
   $cpr = $_SESSION['ding_wayf_dk_create_user'];
 
+  // Call to serviceplatform
+  global $serviceplatformen;
+  $serviceplatformen = serviceplatformen_get_address($cpr);
+
   // Remove session variables used in redirects in the user creation process.
   unset($_SESSION['ding_wayf_dk_create_user']);
   unset($_SESSION['ding_wayf_dk_login_destination']);
-  
+
   // Try to create the user at the provider.
   try {
     // Create user.
-    alma_client_invoke('self_register', $cpr, $values['pin'], $values['name'], $values['mail'], $values['branch'], $values['sms']);
+    alma_client_invoke('self_register', $cpr, $values['pin'], $serviceplatformen['name'], $serviceplatformen['road'] . ', ' . $serviceplatformen['postdistrikt'], $serviceplatformen['zipcode'], $values['mail'], $values['branch'], $values['sms']);
 
     // Login the user and ensure he/her is redirect to notice page.
     $_REQUEST['destination'] = 'wayf/create-user/notice';
+
+    // Calculate borrower category & save updates to the library system
+    update_library_patrons($serviceplatformen);
+
+    global $base_url;
+
+    // Send mail to user
+    ding_wayf_dk_create_user_drupal_mail('default_from', $values['mail'], 'Låner ved ' . variable_get('site_name', 'Biblioteket'), '<p>Hej
+      <p>Du er nu oprettet som låner ved ' .variable_get('site_name', 'Biblioteket'). '. Du kan reservere og låne materialer.
+      <p>Dit brugernavn er dit cpr-nummer. Din pinkode er den kode du valgte, da du oprettede dig via hjemmesiden.
+      <p>Hvis du er bosat uden for kommunen skal du være opmærksom på, at du ikke kan benytte bibliotekets Netmedier.
+      Brug af bibliotekets netmedier forudsætter, at du er bosat indenfor kommunen.
+      <p>Med venlig hilsen<br>
+      '.variable_get('site_name', 'Biblioteket').' - <a href="mailto:it-udvikling@fynbib.dk">it-udvikling@fynbib.dk</a><br>
+      ' .$base_url);
+
     ding_wayf_dk_login_wayf_dk_login_create_user(array(
       'schacPersonalUniqueID' => array('urn:mace:terena.org:schac:personalUniqueID:dk:CPR:' . $cpr),
-    ));
+      ));
 
     // Remove request fields for the login form.
     drupal_get_messages(NULL, TRUE);
+    }
+    catch (Exception $exception) {
+      drupal_set_message(t('You already have an user account at the library. So we have just logged you in.'));
+      drupal_goto();
+      }
+}
+
+/*
+ * Calculate borrower category
+ */
+function update_library_patrons($serviceplatformen) {
+   global $serviceplatformen;
+
+   $adults = array (
+      'ours' => variable_get('serviceplatformen_adults_ours'),
+      'notours' => variable_get('serviceplatformen_adults_notours'),
+    );
+
+   $children = array (
+      'ours' => variable_get('serviceplatformen_children_ours'),
+      'notours' => variable_get('serviceplatformen_children_notours'),
+     );
+
+   $not_known_postcode    = 9999;
+   $not_known_municipalno = '0000';
+   $our_municipalno       = variable_get('serviceplatformen_our_municipalno');
+   $cat_limit_age_years   = 14;
+
+   if ( substr( $serviceplatformen['KOMKOD'], 0, 1 ) == 0 ) { // if the first character is a 0 then:
+       $serviceplatformen['KOMKOD'] = substr( $serviceplatformen['KOMKOD'], 1 ); // take the string starting at the 2nd character (starts with 0,1,2,3,4)
+   }
+
+   $age = cpr_to_age($serviceplatformen['cpr']);
+
+   $ageidx = $age >= $cat_limit_age_years ? $adults : $children;
+
+   if ($not_known_postcode == $serviceplatformen['zipcode']) {
+        $serviceplatformen['KOMKOD'] = substr( $not_known_municipalno, 1 );
+   }
+
+   if ( $serviceplatformen['KOMKOD'] == $not_known_municipalno ) {
+        $cat = 'zz';
+        } elseif ( $serviceplatformen['KOMKOD'] == $our_municipalno )  {
+        $cat = $ageidx['ours'];
+        } else {
+        $cat = $ageidx['notours'];
+   }
+
+   if (!$fp = fsockopen(variable_get('serviceplatformen_libra_ip'), variable_get('serviceplatformen_libra_port'))) return '';
+   fputs($fp, '<?xml version="1.0" encoding="iso-8859-1"?><transaction><request><patron><update><cat>'. $cat .'</cat><municipalno>'. $serviceplatformen['KOMKOD'] .'</municipalno><tickno>'. $serviceplatformen['cpr'] ."</tickno></update></patron></request></transaction>\n\t");
+   $response = '';
+   while ($line = fgets($fp)) $response .= $line;
+   fclose($fp);
+}
+
+/**
+ * Simple wrapper function for drupal_mail() to avoid extraneous code.
+ */
+function ding_wayf_dk_create_user_drupal_mail($from = 'default_from', $to, $subject, $message) {
+  $my_module = 'ding_wayf_dk_create_user';
+  $my_mail_token = microtime();
+  if ($from == 'default_from') {
+    // Change this to your own default 'from' email address.
+    $from = variable_get('site_mail', 'My Email Address <it-udvikling@fynbib.dk>');
   }
-  catch (Exception $exception) {
-    drupal_set_message(t('You already have an user account at the library. So we have just logged you in.'));
-    drupal_goto();
+  $message = array(
+    'id' => $my_module . '_' . $my_mail_token,
+    'to' => $to,
+    'subject' => $subject,
+    'body' => array($message),
+    'headers' => array(
+      'From' => $from,
+      'Sender' => $from,
+      'Return-Path' => $from,
+      'Content-Type' => 'text/html; charset=UTF-8; format=flowed',
+    ),
+  );
+
+
+  $system = drupal_mail_system($my_module, $my_mail_token);
+  $message = $system->format($message);
+  if ($system->mail($message)) {
+    return TRUE;
+  }
+  else {
+    return FALSE;
   }
 }
+
+/*
+* Calculate age from cpr
+*/
+function cpr_to_age($cpr) {
+
+    $year = substr($cpr, 4, 2);
+    switch (substr($cpr, 6, 1)) {
+            case 0: case 1: case 2: case 3: $year = '19' . $year; break;
+            case 4: case 9: $year = ($year < 37) ? '20' . $year: '19' . $year; break;
+            default: $year = ($year < 37) ? '20' . $year: '18' . $year; break;
+    }
+    if (!checkdate(substr($cpr, 2, 2), substr($cpr, 0, 2), $year)) return 0;
+    return date('Y') - $year - ( date('m') . date('d') < substr($cpr, 2, 2) . substr($cpr, 0, 2) ? 1 : 0 );
+}
+
+function ding_wayf_dk_create_user_mail ($key, &$message, $params) {
+  switch ($key) {
+    case 'mymail':
+      // Set headers etc
+      $message['to'] = 'foo@bar.com';
+      $message['subject'] = t('Hello');
+      $message['body'][] = t('Hello @username,', array('@username' => $params['username']));
+      $message['body'][] = t('The main part of the message.');
+      break;
+  }
+}
+
